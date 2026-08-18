@@ -9,6 +9,8 @@ import '../models/comparacion_result.dart';
 import '../services/storage_service.dart';
 import '../services/graph_service.dart';
 import 'session_detail_screen.dart';
+// 1) Agrega este import arriba, junto a los demás:
+import 'package:permission_handler/permission_handler.dart';
 
 class InventarioScreen extends StatefulWidget {
   final String sessionId;
@@ -284,12 +286,39 @@ class _InventarioScreenState extends State<InventarioScreen> {
 
   // ── QR SCANNER ─────────────────────────────────────────────
 
-  void _iniciarEscaneo() {
+  // 2) Reemplaza tu _iniciarEscaneo() actual por esto:
+
+Future<void> _iniciarEscaneo() async {
+  final status = await Permission.camera.request();
+
+  if (status.isGranted) {
     setState(() {
-      _escaneando       = true;
+      _escaneando = true;
       _scannerController = MobileScannerController();
     });
+    return;
   }
+
+  if (!mounted) return;
+
+  if (status.isPermanentlyDenied) {
+    // El usuario ya lo denegó "para siempre": el diálogo del sistema
+    // no vuelve a aparecer, hay que mandarlo a Ajustes.
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('Activa el permiso de cámara en Ajustes para escanear QR'),
+      backgroundColor: AppTheme.rojo,
+      action: SnackBarAction(
+        label: 'Ajustes',
+        onPressed: openAppSettings,
+      ),
+    ));
+  } else {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Se necesita el permiso de cámara para escanear'),
+      backgroundColor: AppTheme.rojo,
+    ));
+  }
+}
 
   void _detenerEscaneo() {
     _scannerController?.dispose();
@@ -666,7 +695,29 @@ class _InventarioScreenState extends State<InventarioScreen> {
 
         if (_escaneando)
           Expanded(child: Stack(children: [
-            MobileScanner(controller: _scannerController!, onDetect: _onQRDetectado),
+            MobileScanner(
+  controller: _scannerController!,
+  onDetect: _onQRDetectado,
+  errorBuilder: (context, error, child) {
+    debugPrint('MobileScanner error: ${error.errorCode} — ${error.errorDetails}');
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.error_outline, color: Colors.white, size: 48),
+          const SizedBox(height: 12),
+          Text('${error.errorCode}',
+              style: const TextStyle(color: Colors.white)),
+          const SizedBox(height: 12),
+          ElevatedButton(
+            onPressed: openAppSettings,
+            child: const Text('Abrir Ajustes'),
+          ),
+        ],
+      ),
+    );
+  },
+),
             Positioned(top: 0, left: 0, right: 0,
               child: Container(
                 color: AppTheme.azulPrincipal.withOpacity(0.7),
