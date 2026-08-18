@@ -33,7 +33,14 @@ class _InventarioScreenState extends State<InventarioScreen> {
   String? _columnaActual;
   bool _loading = true;
   bool _escaneando = false;
+  bool _usarCamara = false; // false = usar el lector físico (gatillo)
   MobileScannerController? _scannerController;
+
+  // ── Lector físico (modo "keyboard wedge") ──────────────────
+  // El gatillo del PDA simula un teclado: el código escaneado llega
+  // como texto + Enter al campo con foco. No usa la cámara.
+  final _wedgeCtrl = TextEditingController();
+  final _wedgeFocus = FocusNode();
 
   final _loteCtrl   = TextEditingController();
   final _palletCtrl = TextEditingController();
@@ -49,6 +56,8 @@ class _InventarioScreenState extends State<InventarioScreen> {
     _scannerController?.dispose();
     _loteCtrl.dispose();
     _palletCtrl.dispose();
+    _wedgeCtrl.dispose();
+    _wedgeFocus.dispose();
     super.dispose();
   }
 
@@ -288,12 +297,42 @@ class _InventarioScreenState extends State<InventarioScreen> {
 
   // 2) Reemplaza tu _iniciarEscaneo() actual por esto:
 
-Future<void> _iniciarEscaneo() async {
+  /// Inicia el modo de escaneo con el lector físico (gatillo del PDA).
+  /// No usa la cámara: el equipo simula un teclado al leer un código.
+  void _iniciarEscaneoFisico() {
+    _wedgeCtrl.clear();
+    setState(() => _escaneando = true);
+    // Pedimos el foco después del rebuild para que el campo ya exista.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _wedgeFocus.requestFocus();
+    });
+  }
+
+  void _onWedgeSubmitted(String raw) {
+    if (raw.trim().isEmpty) {
+      // El lector a veces manda Enter vacío entre lecturas; solo
+      // re-enfocamos para seguir escuchando.
+      _wedgeFocus.requestFocus();
+      return;
+    }
+    _detenerEscaneo();
+    String lote   = raw.trim();
+    String pallet = '1';
+    if (raw.contains('-')) {
+      final partes = raw.split('-');
+      lote   = partes[0].trim();
+      pallet = partes[1].trim();
+    }
+    _procesarYMostrarResultado(lote, pallet, metodo: 'lector');
+  }
+
+Future<void> _iniciarEscaneoCamara() async {
   final status = await Permission.camera.request();
 
   if (status.isGranted) {
     setState(() {
       _escaneando = true;
+      _usarCamara = true;
       _scannerController = MobileScannerController(
         // Config más compatible con cámaras "legacy" típicas de PDAs
         // industriales, donde la config por defecto de CameraX falla.
@@ -348,7 +387,11 @@ Future<void> _iniciarEscaneo() async {
 
   void _detenerEscaneo() {
     _scannerController?.dispose();
-    setState(() { _escaneando = false; _scannerController = null; });
+    setState(() {
+      _escaneando = false;
+      _scannerController = null;
+      _usarCamara = false;
+    });
   }
 
   void _onQRDetectado(BarcodeCapture capture) {
@@ -719,7 +762,75 @@ Future<void> _iniciarEscaneo() async {
           ]),
         ),
 
-        if (_escaneando)
+        if (_escaneando && !_usarCamara)
+          Expanded(child: Stack(children: [
+            // Área invisible que mantiene el foco para capturar la
+            // entrada del lector físico (modo keyboard wedge).
+            Positioned.fill(
+              child: Opacity(
+                opacity: 0,
+                child: TextField(
+                  controller: _wedgeCtrl,
+                  focusNode: _wedgeFocus,
+                  autofocus: true,
+                  onSubmitted: _onWedgeSubmitted,
+                  onTapOutside: (_) => _wedgeFocus.requestFocus(),
+                ),
+              ),
+            ),
+            GestureDetector(
+              onTap: () => _wedgeFocus.requestFocus(),
+              child: Container(
+                color: AppTheme.azulOscuro,
+                width: double.infinity,
+                height: double.infinity,
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.qr_code_scanner, color: Colors.white, size: 72),
+                      const SizedBox(height: 16),
+                      const Text('Presiona el gatillo del lector',
+                          style: TextStyle(color: Colors.white, fontSize: 16,
+                              fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 6),
+                      const Text('Apunta al QR del pallet y dispara',
+                          style: TextStyle(color: Colors.white70, fontSize: 13)),
+                      const SizedBox(height: 20),
+                      TextButton.icon(
+                        onPressed: () {
+                          _detenerEscaneo();
+                          _iniciarEscaneoCamara();
+                        },
+                        icon: const Icon(Icons.camera_alt, color: Colors.white70, size: 18),
+                        label: const Text('Usar cámara en su lugar',
+                            style: TextStyle(color: Colors.white70)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(top: 0, left: 0, right: 0,
+              child: Container(
+                color: AppTheme.azulPrincipal.withOpacity(0.7),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: const Text('Escaneo por lector físico',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            Positioned(bottom: 16, left: 0, right: 0,
+              child: Center(child: ElevatedButton.icon(
+                onPressed: _detenerEscaneo,
+                icon: const Icon(Icons.close),
+                label: const Text('Cancelar'),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.rojo),
+              )),
+            ),
+          ])),
+
+        if (_escaneando && _usarCamara)
           Expanded(child: Stack(children: [
             MobileScanner(
   controller: _scannerController!,
@@ -779,7 +890,7 @@ Future<void> _iniciarEscaneo() async {
             padding: const EdgeInsets.all(16),
             child: Row(children: [
               Expanded(child: ElevatedButton.icon(
-                onPressed: _iniciarEscaneo,
+                onPressed: _iniciarEscaneoFisico,
                 icon: const Icon(Icons.qr_code_scanner),
                 label: const Text('Escanear QR'),
                 style: ElevatedButton.styleFrom(
