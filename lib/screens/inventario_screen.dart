@@ -382,6 +382,171 @@ class _InventarioScreenState extends State<InventarioScreen> {
     }
   }
 
+
+    // ── EDITAR / ELIMINAR PALLET ────────────────────────────────
+
+  void _editarPallet(PalletConteo c) {
+    final loteCtrl   = TextEditingController(text: c.lote);
+    final palletCtrl = TextEditingController(text: c.numeroPallet);
+    String columnaSel = c.columna;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Padding(
+          padding: EdgeInsets.only(
+            left: 20, right: 20, top: 24,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                const Expanded(child: Text('Editar Pallet',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
+                        color: AppTheme.azulPrincipal))),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: AppTheme.rojo),
+                  tooltip: 'Eliminar pallet',
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _confirmarYEliminarPallet(c);
+                  },
+                ),
+              ]),
+              const Text('Se recalculará la comparación con Baan al guardar',
+                  style: TextStyle(color: AppTheme.grisTexto, fontSize: 12)),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: columnaSel,
+                decoration: const InputDecoration(
+                  labelText: 'Columna', prefixIcon: Icon(Icons.grid_view)),
+                items: _session!.columnas.map((col) => DropdownMenuItem(
+                  value: col, child: Text(col))).toList(),
+                onChanged: (v) { if (v != null) setModalState(() => columnaSel = v); },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: loteCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Lote', prefixIcon: Icon(Icons.inventory)),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: palletCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'N° Pallet', prefixIcon: Icon(Icons.tag)),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    final lote   = loteCtrl.text.trim();
+                    final pallet = palletCtrl.text.trim();
+                    if (lote.isEmpty || pallet.isEmpty) return;
+                    Navigator.pop(ctx);
+                    _guardarEdicionPallet(c, columnaSel, lote, pallet);
+                  },
+                  icon: const Icon(Icons.save),
+                  label: const Text('Guardar Cambios'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.azulPrincipal, foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _guardarEdicionPallet(
+      PalletConteo original, String columna, String lote, String pallet) async {
+    if (_session == null) return;
+
+    // Verificar duplicado contra otros pallets (excluyendo el que se edita)
+    final yaExiste = _session!.conteos.any((c) =>
+        c.id != original.id &&
+        c.columna == columna && c.lote == lote &&
+        c.numeroPallet == pallet && c.fase == widget.fase);
+    if (yaExiste) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('⚠ Ya existe otro registro con ese lote y pallet en esa columna'),
+        backgroundColor: AppTheme.amarillo,
+      ));
+      return;
+    }
+
+    final r = _compararPallet(lote, pallet, columna);
+    final estadoPallet = r.estado == EstadoComparacion.ok
+        ? EstadoPallet.ok
+        : r.estado == EstadoComparacion.otraUbicacion
+            ? EstadoPallet.error
+            : EstadoPallet.pendiente;
+
+    final actualizado = PalletConteo(
+      id:              original.id,
+      sessionId:       original.sessionId,
+      columna:         columna,
+      lote:            lote,
+      numeroPallet:    pallet,
+      ubicacionFisica: columna,
+      ubicacionSistema: r.columnaEnBaan,
+      estado:          estadoPallet,
+      timestamp:       original.timestamp,
+      metodo:          original.metodo,
+      fase:            original.fase,
+    );
+
+    await StorageService.instance.saveConteo(actualizado);
+    await _reloadSession();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Actualizado: $lote-$pallet → ${_resultadoLabel(r.estado)}'),
+      backgroundColor: AppTheme.verde,
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  Future<void> _confirmarYEliminarPallet(PalletConteo c) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Eliminar Pallet'),
+        content: Text('¿Eliminar el registro de Lote ${c.lote} - Pallet ${c.numeroPallet}?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.rojo),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    await StorageService.instance.deleteConteo(c.id);
+    await _reloadSession();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Pallet eliminado'),
+      backgroundColor: AppTheme.grisTexto,
+    ));
+  }
+
   // ── FINALIZAR ───────────────────────────────────────────────
 
   Future<void> _finalizarSesion() async {
@@ -575,7 +740,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
     ],
   );
 
-  Widget _buildListaPallets() {
+    Widget _buildListaPallets() {
     final conteos = _session!.conteoPorColumna(_columnaActual ?? '', fase: widget.fase);
     if (conteos.isEmpty) return Center(
       child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -610,6 +775,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
         return Card(
           margin: const EdgeInsets.only(bottom: 8),
           child: ListTile(
+            onTap: () => _editarPallet(c),
             leading: Icon(icon, color: color, size: 28),
             title: Text('Lote: ${c.lote}  ·  Pallet: ${c.numeroPallet}',
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
@@ -623,15 +789,22 @@ class _InventarioScreenState extends State<InventarioScreen> {
                     style: const TextStyle(color: AppTheme.grisTexto, fontSize: 11)),
               ],
             ),
-            trailing: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: color),
-              ),
-              child: Text(estadoStr,
-                  style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: color),
+                  ),
+                  child: Text(estadoStr,
+                      style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(width: 6),
+                const Icon(Icons.edit, size: 16, color: AppTheme.grisTexto),
+              ],
             ),
             isThreeLine: c.ubicacionSistema != null && c.ubicacionSistema!.isNotEmpty,
           ),
