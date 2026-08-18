@@ -316,14 +316,42 @@ class _InventarioScreenState extends State<InventarioScreen> {
       return;
     }
     _detenerEscaneo();
-    String lote   = raw.trim();
-    String pallet = '1';
-    if (raw.contains('-')) {
-      final partes = raw.split('-');
-      lote   = partes[0].trim();
-      pallet = partes[1].trim();
+
+    final resultado = _parsearLoteYPallet(raw);
+    _procesarYMostrarResultado(resultado.lote, resultado.pallet, metodo: 'lector');
+  }
+
+  /// Parsea el QR de Baan, que puede venir separado por "]" o por "|"
+  /// según la impresión de la etiqueta:
+  /// [0] = lote (8 dígitos, solo se usan los últimos 6)
+  /// [6] = número de pallet
+  ({String lote, String pallet}) _parsearLoteYPallet(String raw) {
+    String? separador;
+    if (raw.contains(']')) {
+      separador = ']';
+    } else if (raw.contains('|')) {
+      separador = '|';
     }
-    _procesarYMostrarResultado(lote, pallet, metodo: 'lector');
+
+    if (separador != null) {
+      final partes = raw.split(separador);
+      if (partes.length > 6) {
+        final segLote = partes[0].trim();
+        final lote = segLote.length >= 6
+            ? segLote.substring(segLote.length - 6)
+            : segLote;
+        final pallet = partes[6].trim();
+        return (lote: lote, pallet: pallet);
+      }
+    }
+
+    // Formato de respaldo: "lote-pallet"
+    if (raw.contains('-')) {
+      final p = raw.split('-');
+      return (lote: p[0].trim(), pallet: p[1].trim());
+    }
+
+    return (lote: raw.trim(), pallet: '1');
   }
 
 Future<void> _iniciarEscaneoCamara() async {
@@ -400,14 +428,8 @@ Future<void> _iniciarEscaneoCamara() async {
     if (raw == null || raw.isEmpty) return;
     _detenerEscaneo();
 
-    String lote   = raw;
-    String pallet = '1';
-    if (raw.contains('-')) {
-      final partes = raw.split('-');
-      lote   = partes[0].trim();
-      pallet = partes[1].trim();
-    }
-    _procesarYMostrarResultado(lote, pallet, metodo: 'qr');
+    final resultado = _parsearLoteYPallet(raw);
+    _procesarYMostrarResultado(resultado.lote, resultado.pallet, metodo: 'qr');
   }
 
   // ── REGISTRAR PALLET ────────────────────────────────────────
