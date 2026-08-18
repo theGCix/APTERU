@@ -340,7 +340,9 @@ class _InventarioScreenState extends State<InventarioScreen> {
         final lote = segLote.length >= 6
             ? segLote.substring(segLote.length - 6)
             : segLote;
-        final pallet = partes[6].trim();
+        final segPallet = partes[6].trim();
+        final numPallet = int.tryParse(segPallet);
+        final pallet = numPallet != null ? numPallet.toString() : segPallet;
         return (lote: lote, pallet: pallet);
       }
     }
