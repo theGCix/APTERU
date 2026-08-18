@@ -294,8 +294,34 @@ Future<void> _iniciarEscaneo() async {
   if (status.isGranted) {
     setState(() {
       _escaneando = true;
-      _scannerController = MobileScannerController();
+      _scannerController = MobileScannerController(
+        // Config más compatible con cámaras "legacy" típicas de PDAs
+        // industriales, donde la config por defecto de CameraX falla.
+        detectionSpeed: DetectionSpeed.normal,
+        formats: const [BarcodeFormat.qrCode],
+        cameraResolution: const Size(640, 480),
+        autoStart: false,
+      );
     });
+
+    // Arrancamos manualmente y capturamos cualquier excepción para
+    // mostrarla en pantalla (sin depender de adb logcat).
+    try {
+      await _scannerController!.start();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _escaneando = false);
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Error al iniciar la cámara'),
+          content: SingleChildScrollView(child: Text(e.toString())),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar')),
+          ],
+        ),
+      );
+    }
     return;
   }
 
@@ -701,19 +727,30 @@ Future<void> _iniciarEscaneo() async {
   errorBuilder: (context, error, child) {
     debugPrint('MobileScanner error: ${error.errorCode} — ${error.errorDetails}');
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.error_outline, color: Colors.white, size: 48),
-          const SizedBox(height: 12),
-          Text('${error.errorCode}',
-              style: const TextStyle(color: Colors.white)),
-          const SizedBox(height: 12),
-          ElevatedButton(
-            onPressed: openAppSettings,
-            child: const Text('Abrir Ajustes'),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 48),
+            const SizedBox(height: 12),
+            Text('${error.errorCode}',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            // Mostramos el detalle completo del error para poder
+            // diagnosticar sin necesidad de logcat.
+            Text(
+              error.errorDetails?.message ?? 'Sin detalles adicionales',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: openAppSettings,
+              child: const Text('Abrir Ajustes'),
+            ),
+          ],
+        ),
       ),
     );
   },
